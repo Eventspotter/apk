@@ -8,8 +8,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build APK
-        uses: sudo apt-get install aidl
-      - name: aidl
         uses: digreatbrian/buildozer-action@v2
         with:
           python-version: 3.11
