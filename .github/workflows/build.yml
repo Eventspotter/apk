@@ -1,6 +1,8 @@
 on:
   push:
     branches: [ main ]
+    
+sudo apt-get install aidl=version
 
 jobs:
   build:
