@@ -21,8 +21,6 @@ jobs:
 
 ### buildozer.spect
 
-Use these configurations
-
 # (int) Target Android API, should be as high as possible.
 android.api = 34
 
