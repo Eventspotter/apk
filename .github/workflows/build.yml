@@ -1,172 +1,56 @@
-name: Tests
+name: Python tests
 
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+on: [push, pull_request]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  check_generated_files:
-    name: "Check if generated files are up to date"
+  test:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -qy npm git
-      - name: Check if files are up to date
-        run: make build-js
-      - name: Check for changes
-        run: |
-          git add -u
-          changes=$(git status --porcelain)
-          # Check for changes in regenerated files
-          if test -n "$changes"; then
-            echo "Generated files not up to date."
-            echo "$changes"
-            echo ""
-            git diff --staged || true
-            exit 1
-          fi
+    strategy:
+      matrix:
+        python:
+          - { VERSION: "3.9", TOXENV: "py39", ALLOW_FAILURE: false }
+          - { VERSION: "3.10", TOXENV: "py310", ALLOW_FAILURE: false }
+          - { VERSION: "3.11", TOXENV: "py311", ALLOW_FAILURE: false }
+          - { VERSION: "3.12", TOXENV: "py312", ALLOW_FAILURE: false }
+          - { VERSION: "3.13", TOXENV: "py313", ALLOW_FAILURE: false }
+          - {
+              VERSION: "3.13",
+              TOXENV: "flake8,doclint,docs,commitlint",
+              ALLOW_FAILURE: false,
+            }
+          - { VERSION: "3.13", TOXENV: "docstrings", ALLOW_FAILURE: true }
+          - { VERSION: "pypy3.9", TOXENV: "pypy", ALLOW_FAILURE: false }
 
-  test_with_coverage:
-    name: "Test with coverage"
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
         with:
-          python-version: "3.10"
-      - name: Set up dependencies
+          egress-policy: audit
+
+      - name: Check out the repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: ${{ matrix.PYTHON.VERSION }}
+
+      - name: Upgrade pip
         run: |
-          sudo apt-get update
-          sudo apt-get install -qy libdebuginfod-dev libunwind-dev liblz4-dev pkg-config npm gdb lldb lcov
-      - name: Create virtual environment
+          pip install pip
+          pip --version
+
+      - name: Install Tox
         run: |
-          python3 -m venv venv
-      - name: Install Python dependencies
-        run: |
-          ./venv/bin/python -m pip install --upgrade pip
-      - name: Disable ptrace security restrictions
-        run: |
-          echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
-      - name: Run coverage
+          pip install tox
+          tox --version
+
+      - name: Run Tox
+        run: tox
         env:
-          CYTHON_TEST_MACROS: 1
-          PYTHON: ./venv/bin/python
-        run: |
-          make dev-install pycoverage
-
-  test_in_alpine:
-    name: "Test in Alpine Linux"
-    runs-on: ubuntu-latest
-    container:
-      image: alpine
-      options: --cap-add=SYS_PTRACE
-    env:
-      # Coverage is kind of broken in Alpine
-      SKIP_COVERAGE_HTML: 1
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up dependencies
-        run: |
-          apk add --update build-base libunwind-dev lz4-dev musl-dev python3-dev python3-dbg gdb lldb git bash perl perl-datetime build-base perl-app-cpanminus
-          cpanm Date::Parse
-          cpanm Capture::Tiny
-          # Build elfutils
-          cd /
-          apk add --update argp-standalone bison bsd-compat-headers bzip2-dev curl curl-dev flex-dev libtool linux-headers musl-fts-dev musl-libintl musl-obstack-dev xz-dev zlib-dev zstd-dev
-          VERS=0.191
-          curl -L https://mirrors.kernel.org/sourceware/elfutils/$VERS/elfutils-$VERS.tar.bz2 >./elfutils.tar.bz2
-          tar -xf elfutils.tar.bz2
-          cd elfutils-$VERS
-          CFLAGS='-Wno-error -DFNM_EXTMATCH=0 -g -O3' CXXFLAGS='-Wno-error -DFNM_EXTMATCH=0 -g -O3' ./configure --enable-libdebuginfod --disable-debuginfod --disable-nls --with-zstd
-          make install
-      - name: Clone lcov repository
-        run: |
-          git clone https://github.com/linux-test-project/lcov.git
-          ls -al
-      - name: Build and install lcov
-        run: |
-          cd lcov
-          make install
-      - name: Create virtual environment
-        run: |
-          python3 -m venv /venv
-      - name: Install Python dependencies
-        run: |
-          /venv/bin/python -m pip install --upgrade pip
-      - name: Run coverage
-        env:
-          CYTHON_TEST_MACROS: 1
-          PYTHON: /venv/bin/python
-          GENHTMLOPTS: "--ignore-errors inconsistent"
-        run: |
-          make dev-install pycoverage
-
-  lint_and_docs:
-    name: "Lint and Docs"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 16
-      - name: Symlink node as nodejs
-        run: ln -sf "$(which node)" "$(which node)js"
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -qy clang-format npm libdebuginfod-dev libunwind-dev liblz4-dev pkg-config
-      - name: Install Python dependencies
-        run: |
-          python3 -m pip install -r requirements-extra.txt
-      - name: Install Package
-        run: |
-          python3 -m pip install -e .
-      - name: Lint sources
-        run: |
-          make lint
-      - name: Build docs
-        run: |
-          towncrier build --version 99.99 --name memray --keep
-          make docs
-
-  valgrind:
-    name: "Valgrind & Helgrind"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-      - name: Set up dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -qy libdebuginfod-dev libunwind-dev liblz4-dev pkg-config npm valgrind
-      - name: Install Python dependencies and package
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements-test.txt
-          python3 -m pip install -e .
-        env:
-          MEMRAY_MINIMIZE_INLINING: 1
-      - name: Run Valgrind
-        run: make valgrind
-      - name: Run Helgrind
-        run: make helgrind
+          TOXENV: ${{ matrix.PYTHON.TOXENV }}
+          GH_RECORD_MODE: "none"
+        continue-on-error: ${{ matrix.PYTHON.ALLOW_FAILURE }}
